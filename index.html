@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scan &amp; Return</title>
+<style>
+  :root { --bg:#0f1115; --panel:#1a1e26; --line:#2b313c; --fg:#e8eaed; --muted:#9aa3b2; --accent:#4f9cff; --ok:#3ecf8e; --warn:#ffb020; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:18px; }
+  header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
+  nav { display:flex; gap:4px; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; }
+  nav button { flex:1; padding:10px; border:1px solid var(--line); background:transparent; color:var(--muted); border-radius:8px; cursor:pointer; font-size:14px; }
+  nav button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  main { padding:16px; max-width:640px; margin:0 auto; }
+  section { display:none; }
+  section.active { display:block; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, select { width:100%; padding:10px; background:var(--panel); border:1px solid var(--line); color:var(--fg); border-radius:8px; font-size:15px; }
+  button.action { margin-top:14px; padding:11px 16px; background:var(--accent); color:#fff; border:0; border-radius:8px; font-size:15px; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; margin-top:14px; }
+  .qrbox { text-align:center; }
+  .qrbox img { background:#fff; padding:10px; border-radius:8px; width:220px; height:220px; image-rendering:pixelated; }
+  .payload { font-family:ui-monospace, monospace; font-size:12px; color:var(--muted); word-break:break-all; margin-top:8px; }
+  #video { width:100%; border-radius:12px; background:#000; aspect-ratio:1/1; object-fit:cover; }
+  .status { margin-top:12px; padding:12px; border-radius:8px; background:var(--panel); border:1px solid var(--line); }
+  .status.ok { border-color:var(--ok); }
+  .status.warn { border-color:var(--warn); }
+  .active-user { font-weight:600; color:var(--accent); }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .row:last-child { border-bottom:0; }
+  .row small { color:var(--muted); display:block; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:999px; align-self:center; white-space:nowrap; }
+  .pill.out { background:#3a2a12; color:var(--warn); }
+  .pill.back { background:#12322a; color:var(--ok); }
+  .muted { color:var(--muted); }
+  .list-empty { color:var(--muted); padding:10px 0; }
+  h2 { font-size:15px; margin:4px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scan &amp; Return</h1>
+  <p>Scan a user, then scan items to check them out or return them.</p>
+</header>
+
+<nav>
+  <button data-tab="scan" class="active">Scan</button>
+  <button data-tab="setup">Setup</button>
+  <button data-tab="ledger">Ledger</button>
+</nav>
+
+<main>
+  <!-- ======================= SCAN ======================= -->
+  <section id="scan" class="active">
+    <div class="card">
+      <div id="activeUser" class="muted">No user scanned yet — scan a <span class="active-user">user QR</span> first.</div>
+    </div>
+    <div class="card">
+      <video id="video" playsinline muted></video>
+      <button id="camBtn" class="action" style="width:100%">Start camera</button>
+      <div id="scanStatus" class="status muted">Camera off.</div>
+    </div>
+  </section>
+
+  <!-- ======================= SETUP ======================= -->
+  <section id="setup">
+    <div class="card">
+      <h2>Create a QR code</h2>
+      <label for="kind">Type</label>
+      <select id="kind">
+        <option value="U">User</option>
+        <option value="I">Item</option>
+      </select>
+      <label for="name">Name</label>
+      <input id="name" placeholder="e.g. Alice Smith  /  Drill #3" autocomplete="off">
+      <button id="genBtn" class="action">Generate &amp; save</button>
+    </div>
+    <div id="genResult"></div>
+    <div class="card">
+      <h2>Saved codes</h2>
+      <div id="registry"></div>
+    </div>
+  </section>
+
+  <!-- ======================= LEDGER ======================= -->
+  <section id="ledger">
+    <div class="card">
+      <h2>Currently checked out</h2>
+      <div id="openList"></div>
+    </div>
+    <div class="card">
+      <h2>History</h2>
+      <div id="histList"></div>
+      <button id="clearBtn" class="action ghost" style="width:100%">Clear ledger</button>
+    </div>
+  </section>
+</main>
+
+<script src="qrcode.min.js"></script>
+<script>
+/* ---------------- storage ---------------- */
+const DB = {
+  get(k, def) { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
+  set(k, v) { localStorage.setItem(k, JSON.stringify(v)); },
+};
+const K_REG = 'sr_registry';    // [{kind,id,name,payload}]
+const K_LED = 'sr_ledger';      // [{itemId,itemName,userId,userName,out,back}]
+
+/* ---------------- payload format: SR1|U|id|name ---------------- */
+function makePayload(kind, id, name) { return ['SR1', kind, id, name].join('|'); }
+function parsePayload(s) {
+  const p = (s || '').split('|');
+  if (p[0] !== 'SR1') return null;
+  const kind = p[1] === 'U' ? 'user' : p[1] === 'I' ? 'item' : null;
+  if (!kind || !p[2]) return null;
+  return { kind, id: p[2], name: p.slice(3).join('|') || p[2] };
+}
+const newId = (prefix) => prefix + '_' + Math.random().toString(36).slice(2, 8);
+
+/* ---------------- tabs ---------------- */
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('main section').forEach(s => s.classList.toggle('active', s.id === btn.dataset.tab));
+    if (btn.dataset.tab === 'ledger') renderLedger();
+    if (btn.dataset.tab === 'setup') renderRegistry();
+    if (btn.dataset.tab !== 'scan') stopCamera();
+  };
+});
+
+/* ---------------- setup: generate QR ---------------- */
+function renderQR(payload) {
+  const qr = qrcode(0, 'M');
+  qr.addData(payload);
+  qr.make();
+  return qr.createImgTag(6, 8); // cellSize, margin -> <img> data URI
+}
+document.getElementById('genBtn').onclick = () => {
+  const kind = document.getElementById('kind').value;
+  const name = document.getElementById('name').value.trim();
+  if (!name) { alert('Enter a name.'); return; }
+  const id = newId(kind === 'U' ? 'u' : 'i');
+  const payload = makePayload(kind, id, name);
+  const entry = { kind, id, name, payload };
+  const reg = DB.get(K_REG, []);
+  reg.push(entry);
+  DB.set(K_REG, reg);
+  document.getElementById('name').value = '';
+  showGenResult(entry);
+  renderRegistry();
+};
+function showGenResult(entry) {
+  const el = document.getElementById('genResult');
+  el.innerHTML = `<div class="card qrbox">
+      <h2>${entry.kind === 'U' ? 'User' : 'Item'}: ${escapeHtml(entry.name)}</h2>
+      ${renderQR(entry.payload)}
+      <div class="payload">${escapeHtml(entry.payload)}</div>
+      <button class="action ghost" onclick="printQR('${escapeAttr(entry.payload)}','${escapeAttr(entry.name)}')">Print this code</button>
+    </div>`;
+}
+function renderRegistry() {
+  const reg = DB.get(K_REG, []);
+  const el = document.getElementById('registry');
+  if (!reg.length) { el.innerHTML = '<div class="list-empty">Nothing created yet.</div>'; return; }
+  el.innerHTML = reg.map((e, i) => `<div class="row">
+      <div><strong>${escapeHtml(e.name)}</strong><small>${e.kind === 'U' ? 'user' : 'item'} · ${e.id}</small></div>
+      <div style="display:flex; gap:6px; align-items:center">
+        <button class="pill back" style="border:0;cursor:pointer" onclick="showSaved(${i})">Show QR</button>
+        <button class="pill out" style="border:0;cursor:pointer" onclick="delSaved(${i})">Delete</button>
+      </div>
+    </div>`).join('');
+}
+window.showSaved = (i) => showGenResult(DB.get(K_REG, [])[i]);
+window.delSaved = (i) => { const reg = DB.get(K_REG, []); reg.splice(i, 1); DB.set(K_REG, reg); renderRegistry(); };
+window.printQR = (payload, name) => {
+  const w = window.open('', '_blank');
+  w.document.write(`<title>${escapeHtml(name)}</title><div style="text-align:center;font:16px sans-serif;padding:40px">
+    <h2>${escapeHtml(name)}</h2>${renderQR(payload)}<p style="font-family:monospace;font-size:11px">${escapeHtml(payload)}</p></div>`);
+  w.document.close(); w.focus(); w.print();
+};
+
+/* ---------------- scan ---------------- */
+let stream = null, scanTimer = null, activeUser = null, lastVal = '', lastAt = 0;
+const video = document.getElementById('video');
+
+document.getElementById('camBtn').onclick = () => (stream ? stopCamera() : startCamera());
+
+async function startCamera() {
+  if (!('BarcodeDetector' in window)) {
+    setStatus('warn', 'This browser has no built-in BarcodeDetector. Use Chrome/Edge, or Safari 17+.');
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = stream;
+    await video.play();
+    const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    document.getElementById('camBtn').textContent = 'Stop camera';
+    setStatus('', 'Point the camera at a QR code…');
+    scanTimer = setInterval(async () => {
+      try {
+        const codes = await detector.detect(video);
+        if (codes.length) handleScan(codes[0].rawValue);
+      } catch (_) { /* transient decode errors are fine */ }
+    }, 300);
+  } catch (e) {
+    setStatus('warn', 'Could not open camera: ' + e.message);
+  }
+}
+function stopCamera() {
+  if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.srcObject = null;
+  document.getElementById('camBtn').textContent = 'Start camera';
+  setStatus('muted', 'Camera off.');
+}
+function handleScan(raw) {
+  const now = Date.now();
+  if (raw === lastVal && now - lastAt < 2500) return; // debounce repeats
+  lastVal = raw; lastAt = now;
+
+  const data = parsePayload(raw);
+  if (!data) { setStatus('warn', 'Unrecognized code: ' + raw); return; }
+
+  if (data.kind === 'user') {
+    activeUser = data;
+    renderActiveUser();
+    setStatus('ok', '👤 User set: ' + data.name + '. Now scan an item.');
+    beep();
+    return;
+  }
+  // item
+  if (!activeUser) { setStatus('warn', 'Scan a user QR before scanning items.'); return; }
+  const result = toggleItem(data, activeUser);
+  setStatus('ok', result);
+  beep();
+}
+function renderActiveUser() {
+  document.getElementById('activeUser').innerHTML = activeUser
+    ? `Active user: <span class="active-user">${escapeHtml(activeUser.name)}</span> — scan items to check out / return.`
+    : 'No user scanned yet — scan a <span class="active-user">user QR</span> first.';
+}
+function setStatus(cls, msg) {
+  const el = document.getElementById('scanStatus');
+  el.className = 'status ' + cls;
+  el.textContent = msg;
+}
+
+/* ---------------- ledger logic ---------------- */
+function toggleItem(item, user) {
+  const led = DB.get(K_LED, []);
+  const open = led.find(r => r.itemId === item.id && r.back === null);
+  if (open) {
+    open.back = Date.now();
+    DB.set(K_LED, led);
+    return '↩︎ Returned: ' + item.name + ' (was out to ' + open.userName + ')';
+  }
+  led.push({ itemId: item.id, itemName: item.name, userId: user.id, userName: user.name, out: Date.now(), back: null });
+  DB.set(K_LED, led);
+  return '📦 Checked out: ' + item.name + ' → ' + user.name;
+}
+function renderLedger() {
+  const led = DB.get(K_LED, []);
+  const open = led.filter(r => r.back === null).reverse();
+  const hist = led.slice().reverse();
+  document.getElementById('openList').innerHTML = open.length
+    ? open.map(r => rowHtml(r)).join('')
+    : '<div class="list-empty">Nothing is checked out.</div>';
+  document.getElementById('histList').innerHTML = hist.length
+    ? hist.map(r => rowHtml(r)).join('')
+    : '<div class="list-empty">No activity yet.</div>';
+}
+function rowHtml(r) {
+  const status = r.back === null
+    ? '<span class="pill out">OUT</span>'
+    : '<span class="pill back">RETURNED</span>';
+  return `<div class="row">
+    <div><strong>${escapeHtml(r.itemName)}</strong>
+      <small>${escapeHtml(r.userName)} · out ${fmt(r.out)}${r.back ? ' · back ' + fmt(r.back) : ''}</small></div>
+    ${status}</div>`;
+}
+document.getElementById('clearBtn').onclick = () => {
+  if (confirm('Delete the entire ledger?')) { DB.set(K_LED, []); renderLedger(); }
+};
+
+/* ---------------- utils ---------------- */
+function fmt(ts) { const d = new Date(ts); return d.toLocaleString(); }
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+function escapeAttr(s) { return String(s).replace(/['\\]/g, '\\$&').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = 880; g.gain.value = 0.05;
+    o.start(); o.stop(ctx.currentTime + 0.08);
+  } catch (_) {}
+}
+
+renderActiveUser();
+</script>
+</body>
+</html>
