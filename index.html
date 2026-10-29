@@ -50,6 +50,7 @@
 <nav>
   <button data-tab="scan" class="active">Scan</button>
   <button data-tab="setup">Setup</button>
+  <button data-tab="codes">Codes</button>
   <button data-tab="ledger">Ledger</button>
   <button data-tab="sync">Sync</button>
 </nav>
@@ -84,6 +85,19 @@
     <div class="card">
       <h2>Saved codes</h2>
       <div id="registry"></div>
+    </div>
+  </section>
+
+  <!-- ======================= CODES ======================= -->
+  <section id="codes">
+    <div id="codesQR"></div>
+    <div class="card">
+      <h2>Users</h2>
+      <div id="codesUsers"></div>
+    </div>
+    <div class="card">
+      <h2>Items</h2>
+      <div id="codesItems"></div>
     </div>
   </section>
 
@@ -207,7 +221,7 @@ async function mutate(fn) {
   renderAll();
 }
 
-function renderAll() { renderRegistry(); renderLedger(); }
+function renderAll() { renderRegistry(); renderCatalog(); renderLedger(); }
 function startPolling() { if (isSynced() && !poller) poller = setInterval(refresh, 5000); }
 function stopPolling() { if (poller) { clearInterval(poller); poller = null; } }
 
@@ -230,6 +244,7 @@ document.querySelectorAll('nav button').forEach(btn => {
     const tab = btn.dataset.tab;
     if (tab === 'ledger') { refresh(); startPolling(); } else { stopPolling(); }
     if (tab === 'setup') refresh();
+    if (tab === 'codes') refresh();
     if (tab !== 'scan') stopCamera();
   };
 });
@@ -276,6 +291,27 @@ function renderRegistry() {
     </div>`).join('');
 }
 window.showSaved = (id) => { const e = state.registry.find(x => x.id === id); if (e) showGenResult(e); };
+
+/* ---------------- codes: browse catalog, click a name to show its QR ---------------- */
+function renderCatalog() {
+  const reg = state.registry;
+  const list = (arr) => arr.length
+    ? arr.map(e => `<div class="row"><button class="action ghost"
+        style="margin:0;width:100%;text-align:left"
+        onclick="showCatalogQR('${escapeAttr(e.id)}')">${escapeHtml(e.name)}</button></div>`).join('')
+    : '<div class="list-empty">None yet.</div>';
+  document.getElementById('codesUsers').innerHTML = list(reg.filter(e => e.kind === 'U'));
+  document.getElementById('codesItems').innerHTML = list(reg.filter(e => e.kind === 'I'));
+}
+window.showCatalogQR = (id) => {
+  const e = state.registry.find(x => x.id === id);
+  const el = document.getElementById('codesQR');
+  el.innerHTML = e ? `<div class="card qrbox">
+      <h2>${e.kind === 'U' ? 'User' : 'Item'}: ${escapeHtml(e.name)}</h2>
+      ${renderQR(e.payload)}
+      <div class="payload">${escapeHtml(e.payload)}</div>
+    </div>` : '';
+};
 window.delSaved = async (id) => {
   try { await mutate(s => { const i = s.registry.findIndex(x => x.id === id); if (i >= 0) s.registry.splice(i, 1); }); }
   catch (e) { alert('Could not delete (sync error): ' + e.message); }
