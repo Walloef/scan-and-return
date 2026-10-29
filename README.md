@@ -23,6 +23,19 @@ Then open <http://localhost:8000> in any modern browser.
 Deployed as static files on GitHub Pages, which serves over HTTPS — that lets a
 phone's camera work too. Three tabs: **Scan**, **Setup**, **Ledger**.
 
+## Shared sync (optional)
+
+Open the **Sync** tab to share the catalog and ledger across devices via a free
+[jsonbin.io](https://jsonbin.io) bin. One-time: sign up, copy your Master Key, press
+**Create new bin** on the first device, then **Connect** on others with the same key +
+Bin ID. When connected, jsonbin is the source of truth (read-modify-write on each change,
+with a 5s poll on the Ledger tab); otherwise everything stays in `localStorage`.
+
+Keys are stored only in each browser's `localStorage` — they are never committed to this
+repo. Anyone you give the key + Bin ID to can read and change the data, so treat it as a
+demo-grade store.
+
 ## Known limitations (PoC)
 
-- No backend: data lives per-browser in `localStorage` and is not shared across devices.
+- Without sync configured, data lives per-browser in `localStorage` and is not shared.
+- Sync uses whole-document last-write-wins; simultaneous edits on two devices can race.

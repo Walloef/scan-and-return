@@ -51,6 +51,7 @@
   <button data-tab="scan" class="active">Scan</button>
   <button data-tab="setup">Setup</button>
   <button data-tab="ledger">Ledger</button>
+  <button data-tab="sync">Sync</button>
 </nav>
 
 <main>
@@ -98,18 +99,117 @@
       <button id="clearBtn" class="action ghost" style="width:100%">Clear ledger</button>
     </div>
   </section>
+
+  <!-- ======================= SYNC ======================= -->
+  <section id="sync">
+    <div class="card">
+      <h2>Shared sync</h2>
+      <p class="muted" style="font-size:13px; margin:6px 0 0">Connect every device to the same bin to share the catalog and ledger. Your key is stored only in this browser — never uploaded to the repo.</p>
+      <div id="syncStatus" class="status muted" style="margin-top:12px">Not connected — data stays on this device.</div>
+      <label for="syncKey">jsonbin.io API key (X-Master-Key)</label>
+      <input id="syncKey" type="password" placeholder="$2a$10$…" autocomplete="off">
+      <label for="syncBin">Bin ID</label>
+      <input id="syncBin" placeholder="Leave blank, then press Create to make a new one" autocomplete="off">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
+        <button id="syncConnect" class="action" style="flex:1">Connect</button>
+        <button id="syncCreate" class="action ghost" style="flex:1">Create new bin</button>
+      </div>
+      <button id="syncDisconnect" class="action ghost" style="width:100%">Disconnect</button>
+    </div>
+    <div class="card">
+      <h2>Set it up (once)</h2>
+      <ol class="muted" style="font-size:13px; padding-left:18px; margin:6px 0 0">
+        <li>Sign up free at <strong>jsonbin.io</strong>, open <em>API Keys</em>, copy your Master Key.</li>
+        <li>On the first device: paste the key, leave Bin ID blank, press <strong>Create new bin</strong>.</li>
+        <li>Copy the Bin ID it shows. On every other device paste the <em>same</em> key + Bin ID and press <strong>Connect</strong>.</li>
+      </ol>
+      <p class="muted" style="font-size:12px; margin-top:10px">Note: anyone you share the key + Bin ID with can read and change the data. Fine for a demo; lock it down later with a scoped access key or real auth.</p>
+    </div>
+  </section>
 </main>
 
 <script src="qrcode.min.js"></script>
 <script src="jsQR.js"></script>
 <script>
-/* ---------------- storage ---------------- */
-const DB = {
-  get(k, def) { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
+/* ---------------- storage + sync ----------------
+   state = { registry:[{kind,id,name,payload}], ledger:[{itemId,itemName,userId,userName,out,back}] }
+   Source of truth is the remote jsonbin when connected; otherwise localStorage. */
+const LS = {
+  get(k, def) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? def; } catch { return def; } },
   set(k, v) { localStorage.setItem(k, JSON.stringify(v)); },
+  del(k) { localStorage.removeItem(k); },
 };
-const K_REG = 'sr_registry';    // [{kind,id,name,payload}]
-const K_LED = 'sr_ledger';      // [{itemId,itemName,userId,userName,out,back}]
+const K_STATE = 'sr_state';   // local cache of {registry, ledger}
+const K_SYNC  = 'sr_sync';    // { key, binId }
+const API = 'https://api.jsonbin.io/v3/b';
+
+// one-time migration from the earlier per-key layout
+let state = LS.get(K_STATE, null);
+if (!state) {
+  state = { registry: LS.get('sr_registry', []), ledger: LS.get('sr_ledger', []) };
+  LS.set(K_STATE, state);
+}
+let sync = LS.get(K_SYNC, null);   // { key, binId } or null
+let poller = null;
+
+const isSynced = () => !!(sync && sync.key && sync.binId);
+const normalize = (s) => ({
+  registry: Array.isArray(s && s.registry) ? s.registry : [],
+  ledger:   Array.isArray(s && s.ledger)   ? s.ledger   : [],
+});
+
+async function remotePull() {
+  const res = await fetch(`${API}/${sync.binId}/latest`, {
+    headers: { 'X-Master-Key': sync.key, 'X-Bin-Meta': 'false' },
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return normalize(await res.json());
+}
+async function remotePush(s) {
+  const res = await fetch(`${API}/${sync.binId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-Master-Key': sync.key },
+    body: JSON.stringify(s),
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+}
+
+// Pull latest into `state` and re-render. Never throws (surfaces errors in the Sync status).
+async function refresh() {
+  if (isSynced()) {
+    try {
+      state = await remotePull();
+      LS.set(K_STATE, state);
+      setSyncStatus('ok', 'Synced ✓');
+    } catch (e) {
+      setSyncStatus('warn', 'Offline — showing last synced copy (' + e.message + ')');
+    }
+  } else {
+    state = LS.get(K_STATE, { registry: [], ledger: [] });
+  }
+  renderAll();
+}
+
+// Apply fn to the state and persist. When synced, read-modify-write so concurrent
+// edits from other devices are not clobbered. Throws on network failure.
+async function mutate(fn) {
+  if (isSynced()) {
+    const latest = await remotePull();   // read
+    fn(latest);                          // modify
+    await remotePush(latest);            // write
+    state = latest;
+    LS.set(K_STATE, state);
+    setSyncStatus('ok', 'Synced ✓');
+  } else {
+    fn(state);
+    LS.set(K_STATE, state);
+  }
+  renderAll();
+}
+
+function renderAll() { renderRegistry(); renderLedger(); }
+function startPolling() { if (isSynced() && !poller) poller = setInterval(refresh, 5000); }
+function stopPolling() { if (poller) { clearInterval(poller); poller = null; } }
 
 /* ---------------- payload format: SR1|U|id|name ---------------- */
 function makePayload(kind, id, name) { return ['SR1', kind, id, name].join('|'); }
@@ -127,9 +227,10 @@ document.querySelectorAll('nav button').forEach(btn => {
   btn.onclick = () => {
     document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === btn));
     document.querySelectorAll('main section').forEach(s => s.classList.toggle('active', s.id === btn.dataset.tab));
-    if (btn.dataset.tab === 'ledger') renderLedger();
-    if (btn.dataset.tab === 'setup') renderRegistry();
-    if (btn.dataset.tab !== 'scan') stopCamera();
+    const tab = btn.dataset.tab;
+    if (tab === 'ledger') { refresh(); startPolling(); } else { stopPolling(); }
+    if (tab === 'setup') refresh();
+    if (tab !== 'scan') stopCamera();
   };
 });
 
@@ -140,19 +241,18 @@ function renderQR(payload) {
   qr.make();
   return qr.createImgTag(6, 8); // cellSize, margin -> <img> data URI
 }
-document.getElementById('genBtn').onclick = () => {
+document.getElementById('genBtn').onclick = async () => {
   const kind = document.getElementById('kind').value;
   const name = document.getElementById('name').value.trim();
   if (!name) { alert('Enter a name.'); return; }
   const id = newId(kind === 'U' ? 'u' : 'i');
   const payload = makePayload(kind, id, name);
   const entry = { kind, id, name, payload };
-  const reg = DB.get(K_REG, []);
-  reg.push(entry);
-  DB.set(K_REG, reg);
-  document.getElementById('name').value = '';
-  showGenResult(entry);
-  renderRegistry();
+  try {
+    await mutate(s => s.registry.push(entry));
+    document.getElementById('name').value = '';
+    showGenResult(entry);
+  } catch (e) { alert('Could not save (sync error): ' + e.message); }
 };
 function showGenResult(entry) {
   const el = document.getElementById('genResult');
@@ -164,19 +264,22 @@ function showGenResult(entry) {
     </div>`;
 }
 function renderRegistry() {
-  const reg = DB.get(K_REG, []);
+  const reg = state.registry;
   const el = document.getElementById('registry');
   if (!reg.length) { el.innerHTML = '<div class="list-empty">Nothing created yet.</div>'; return; }
-  el.innerHTML = reg.map((e, i) => `<div class="row">
+  el.innerHTML = reg.map((e) => `<div class="row">
       <div><strong>${escapeHtml(e.name)}</strong><small>${e.kind === 'U' ? 'user' : 'item'} · ${e.id}</small></div>
       <div style="display:flex; gap:6px; align-items:center">
-        <button class="pill back" style="border:0;cursor:pointer" onclick="showSaved(${i})">Show QR</button>
-        <button class="pill out" style="border:0;cursor:pointer" onclick="delSaved(${i})">Delete</button>
+        <button class="pill back" style="border:0;cursor:pointer" onclick="showSaved('${escapeAttr(e.id)}')">Show QR</button>
+        <button class="pill out" style="border:0;cursor:pointer" onclick="delSaved('${escapeAttr(e.id)}')">Delete</button>
       </div>
     </div>`).join('');
 }
-window.showSaved = (i) => showGenResult(DB.get(K_REG, [])[i]);
-window.delSaved = (i) => { const reg = DB.get(K_REG, []); reg.splice(i, 1); DB.set(K_REG, reg); renderRegistry(); };
+window.showSaved = (id) => { const e = state.registry.find(x => x.id === id); if (e) showGenResult(e); };
+window.delSaved = async (id) => {
+  try { await mutate(s => { const i = s.registry.findIndex(x => x.id === id); if (i >= 0) s.registry.splice(i, 1); }); }
+  catch (e) { alert('Could not delete (sync error): ' + e.message); }
+};
 window.printQR = (payload, name) => {
   const w = window.open('', '_blank');
   w.document.write(`<title>${escapeHtml(name)}</title><div style="text-align:center;font:16px sans-serif;padding:40px">
@@ -185,7 +288,7 @@ window.printQR = (payload, name) => {
 };
 
 /* ---------------- scan ---------------- */
-let stream = null, scanTimer = null, activeUser = null, lastVal = '', lastAt = 0;
+let stream = null, scanTimer = null, activeUser = null, lastVal = '', lastAt = 0, scanBusy = false;
 const video = document.getElementById('video');
 const scanCanvas = document.createElement('canvas');
 const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
@@ -242,9 +345,13 @@ function handleScan(raw) {
   }
   // item
   if (!activeUser) { setStatus('warn', 'Scan a user QR before scanning items.'); return; }
-  const result = toggleItem(data, activeUser);
-  setStatus('ok', result);
-  beep();
+  if (scanBusy) return;                 // don't overlap writes
+  scanBusy = true;
+  setStatus('', 'Saving…');
+  toggleItem(data, activeUser)
+    .then(msg => { setStatus('ok', msg); beep(); })
+    .catch(e => setStatus('warn', 'Could not save: ' + e.message))
+    .finally(() => { scanBusy = false; });
 }
 function renderActiveUser() {
   document.getElementById('activeUser').innerHTML = activeUser
@@ -258,20 +365,22 @@ function setStatus(cls, msg) {
 }
 
 /* ---------------- ledger logic ---------------- */
-function toggleItem(item, user) {
-  const led = DB.get(K_LED, []);
-  const open = led.find(r => r.itemId === item.id && r.back === null);
-  if (open) {
-    open.back = Date.now();
-    DB.set(K_LED, led);
-    return '↩︎ Returned: ' + item.name + ' (was out to ' + open.userName + ')';
-  }
-  led.push({ itemId: item.id, itemName: item.name, userId: user.id, userName: user.name, out: Date.now(), back: null });
-  DB.set(K_LED, led);
-  return '📦 Checked out: ' + item.name + ' → ' + user.name;
+async function toggleItem(item, user) {
+  let msg;
+  await mutate(s => {
+    const open = s.ledger.find(r => r.itemId === item.id && r.back === null);
+    if (open) {
+      open.back = Date.now();
+      msg = '↩︎ Returned: ' + item.name + ' (was out to ' + open.userName + ')';
+    } else {
+      s.ledger.push({ itemId: item.id, itemName: item.name, userId: user.id, userName: user.name, out: Date.now(), back: null });
+      msg = '📦 Checked out: ' + item.name + ' → ' + user.name;
+    }
+  });
+  return msg;
 }
 function renderLedger() {
-  const led = DB.get(K_LED, []);
+  const led = state.ledger;
   const open = led.filter(r => r.back === null).reverse();
   const hist = led.slice().reverse();
   document.getElementById('openList').innerHTML = open.length
@@ -290,8 +399,10 @@ function rowHtml(r) {
       <small>${escapeHtml(r.userName)} · out ${fmt(r.out)}${r.back ? ' · back ' + fmt(r.back) : ''}</small></div>
     ${status}</div>`;
 }
-document.getElementById('clearBtn').onclick = () => {
-  if (confirm('Delete the entire ledger?')) { DB.set(K_LED, []); renderLedger(); }
+document.getElementById('clearBtn').onclick = async () => {
+  if (!confirm('Delete the entire ledger?')) return;
+  try { await mutate(s => { s.ledger = []; }); }
+  catch (e) { alert('Could not clear (sync error): ' + e.message); }
 };
 
 /* ---------------- utils ---------------- */
@@ -308,6 +419,59 @@ function beep() {
   } catch (_) {}
 }
 
+/* ---------------- sync tab ---------------- */
+const syncKeyEl = document.getElementById('syncKey');
+const syncBinEl = document.getElementById('syncBin');
+function setSyncStatus(cls, msg) {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  el.className = 'status ' + cls;
+  el.textContent = msg;
+}
+document.getElementById('syncCreate').onclick = async () => {
+  const key = syncKeyEl.value.trim();
+  if (!key) { setSyncStatus('warn', 'Enter your API key first.'); return; }
+  setSyncStatus('', 'Creating bin…');
+  try {
+    const res = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Master-Key': key, 'X-Bin-Private': 'true', 'X-Bin-Name': 'scan-and-return' },
+      body: JSON.stringify(normalize(state)),   // seed with whatever is on this device
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    sync = { key, binId: j.metadata.id };
+    LS.set(K_SYNC, sync);
+    syncBinEl.value = sync.binId;
+    setSyncStatus('ok', 'Created & connected. Bin ID: ' + sync.binId);
+  } catch (e) { setSyncStatus('warn', 'Create failed: ' + e.message); }
+};
+document.getElementById('syncConnect').onclick = async () => {
+  const key = syncKeyEl.value.trim(), binId = syncBinEl.value.trim();
+  if (!key || !binId) { setSyncStatus('warn', 'Enter both the API key and Bin ID.'); return; }
+  const prev = sync;
+  sync = { key, binId };
+  setSyncStatus('', 'Connecting…');
+  try {
+    state = await remotePull();            // validates key + bin
+    LS.set(K_STATE, state);
+    LS.set(K_SYNC, sync);
+    setSyncStatus('ok', 'Connected ✓');
+    renderAll();
+  } catch (e) {
+    sync = prev;                           // roll back on failure
+    setSyncStatus('warn', 'Connect failed: ' + e.message);
+  }
+};
+document.getElementById('syncDisconnect').onclick = () => {
+  sync = null; LS.del(K_SYNC); stopPolling();
+  setSyncStatus('muted', 'Disconnected — data stays on this device.');
+};
+
+/* ---------------- startup ---------------- */
+if (sync) { syncKeyEl.value = sync.key; syncBinEl.value = sync.binId; }
+if (isSynced()) { setSyncStatus('ok', 'Connected ✓'); refresh(); }
+else { renderAll(); }
 renderActiveUser();
 </script>
 </body>
