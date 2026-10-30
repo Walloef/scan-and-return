@@ -12,6 +12,7 @@
   header h1 { margin:0; font-size:18px; }
   header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
   nav { display:flex; gap:4px; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; }
+  nav .nav-wrapper { padding: 0 16px; max-width: 640px; margin: 0 auto; width: 100%; display: flex; gap: 16px; }
   nav button { flex:1; padding:10px; border:1px solid var(--line); background:transparent; color:var(--muted); border-radius:8px; cursor:pointer; font-size:14px; }
   nav button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
   main { padding:16px; max-width:640px; margin:0 auto; }
@@ -39,6 +40,19 @@
   .muted { color:var(--muted); }
   .list-empty { color:var(--muted); padding:10px 0; }
   h2 { font-size:15px; margin:4px 0 0; }
+  summary { cursor:pointer; font-size:15px; font-weight:600; }
+  .code-grid { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .code-tile { padding:10px 14px; background:var(--bg); border:1px solid var(--line); color:var(--fg); border-radius:8px; cursor:pointer; font-size:14px; }
+  .code-tile:hover { border-color:var(--accent); }
+  .modal { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+  .modal[hidden] { display:none; }
+  .modal-backdrop { position:absolute; inset:0; background:rgba(0,0,0,0.6); }
+  .modal-card { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; max-width:90vw; }
+  .fab { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:40; padding:14px 28px; background:var(--accent); color:#fff; border:0; border-radius:999px; font-size:16px; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,0.4); }
+  .toast { position:fixed; bottom:92px; left:50%; transform:translateX(-50%); z-index:70; max-width:90vw; padding:12px 20px; background:var(--panel); border:1px solid var(--line); border-radius:999px; text-align:center; font-size:14px; box-shadow:0 6px 20px rgba(0,0,0,0.4); }
+  .toast[hidden] { display:none; }
+  .toast.ok { border-color:var(--ok); }
+  .toast.warn { border-color:var(--warn); }
 </style>
 </head>
 <body>
@@ -48,30 +62,19 @@
 </header>
 
 <nav>
-  <button data-tab="scan" class="active">Scan</button>
-  <button data-tab="setup">Setup</button>
-  <button data-tab="codes">Codes</button>
-  <button data-tab="ledger">Ledger</button>
-  <button data-tab="sync">Sync</button>
+  <div class="nav-wrapper">
+    <button data-tab="codes" class="active">Codes</button>
+    <button data-tab="setup">Add QR</button>
+    <button data-tab="ledger">Ledger</button>
+    <button data-tab="sync">Sync</button>
+  </div>
 </nav>
 
 <main>
-  <!-- ======================= SCAN ======================= -->
-  <section id="scan" class="active">
-    <div class="card">
-      <div id="activeUser" class="muted">No user scanned yet — scan a <span class="active-user">user QR</span> first.</div>
-    </div>
-    <div class="card">
-      <video id="video" playsinline muted></video>
-      <button id="camBtn" class="action" style="width:100%">Start camera</button>
-      <div id="scanStatus" class="status muted">Camera off.</div>
-    </div>
-  </section>
-
   <!-- ======================= SETUP ======================= -->
   <section id="setup">
     <div class="card">
-      <h2>Create a QR code</h2>
+      <h2>Add item/user</h2>
       <label for="kind">Type</label>
       <select id="kind">
         <option value="U">User</option>
@@ -82,22 +85,21 @@
       <button id="genBtn" class="action">Generate &amp; save</button>
     </div>
     <div id="genResult"></div>
-    <div class="card">
-      <h2>Saved codes</h2>
-      <div id="registry"></div>
-    </div>
+    <details class="card">
+      <summary>Saved codes</summary>
+      <div id="registry" style="margin-top:12px"></div>
+    </details>
   </section>
 
   <!-- ======================= CODES ======================= -->
-  <section id="codes">
-    <div id="codesQR"></div>
+  <section id="codes" class="active">
     <div class="card">
       <h2>Users</h2>
-      <div id="codesUsers"></div>
+      <div id="codesUsers" class="code-grid"></div>
     </div>
     <div class="card">
       <h2>Items</h2>
-      <div id="codesItems"></div>
+      <div id="codesItems" class="code-grid"></div>
     </div>
   </section>
 
@@ -141,6 +143,25 @@
     </div>
   </section>
 </main>
+
+<div id="qrModal" class="modal" hidden>
+  <div class="modal-backdrop" onclick="closeQRModal()"></div>
+  <div class="modal-card qrbox" id="qrModalCard"></div>
+</div>
+
+<div id="scanModal" class="modal" hidden>
+  <div class="modal-backdrop" onclick="closeScanModal()"></div>
+  <div class="modal-card" style="width:min(420px,90vw)">
+    <div id="scanActiveUser" class="muted" style="margin-bottom:10px"></div>
+    <video id="video" playsinline muted></video>
+    <div id="scanStatus" class="status muted">Starting camera…</div>
+    <button class="action ghost" style="width:100%" onclick="closeScanModal()">Cancel</button>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<button id="scanFab" class="fab" onclick="openScanModal()">Scan</button>
 
 <script src="qrcode.min.js"></script>
 <script src="jsQR.js"></script>
@@ -245,7 +266,6 @@ document.querySelectorAll('nav button').forEach(btn => {
     if (tab === 'ledger') { refresh(); startPolling(); } else { stopPolling(); }
     if (tab === 'setup') refresh();
     if (tab === 'codes') refresh();
-    if (tab !== 'scan') stopCamera();
   };
 });
 
@@ -285,33 +305,31 @@ function renderRegistry() {
   el.innerHTML = reg.map((e) => `<div class="row">
       <div><strong>${escapeHtml(e.name)}</strong><small>${e.kind === 'U' ? 'user' : 'item'} · ${e.id}</small></div>
       <div style="display:flex; gap:6px; align-items:center">
-        <button class="pill back" style="border:0;cursor:pointer" onclick="showSaved('${escapeAttr(e.id)}')">Show QR</button>
         <button class="pill out" style="border:0;cursor:pointer" onclick="delSaved('${escapeAttr(e.id)}')">Delete</button>
       </div>
     </div>`).join('');
 }
-window.showSaved = (id) => { const e = state.registry.find(x => x.id === id); if (e) showGenResult(e); };
-
 /* ---------------- codes: browse catalog, click a name to show its QR ---------------- */
 function renderCatalog() {
   const reg = state.registry;
-  const list = (arr) => arr.length
-    ? arr.map(e => `<div class="row"><button class="action ghost"
-        style="margin:0;width:100%;text-align:left"
-        onclick="showCatalogQR('${escapeAttr(e.id)}')">${escapeHtml(e.name)}</button></div>`).join('')
+  const tiles = (arr) => arr.length
+    ? arr.map(e => `<button class="code-tile" onclick="showCatalogQR('${escapeAttr(e.id)}')">${escapeHtml(e.name)}</button>`).join('')
     : '<div class="list-empty">None yet.</div>';
-  document.getElementById('codesUsers').innerHTML = list(reg.filter(e => e.kind === 'U'));
-  document.getElementById('codesItems').innerHTML = list(reg.filter(e => e.kind === 'I'));
+  document.getElementById('codesUsers').innerHTML = tiles(reg.filter(e => e.kind === 'U'));
+  document.getElementById('codesItems').innerHTML = tiles(reg.filter(e => e.kind === 'I'));
 }
 window.showCatalogQR = (id) => {
   const e = state.registry.find(x => x.id === id);
-  const el = document.getElementById('codesQR');
-  el.innerHTML = e ? `<div class="card qrbox">
+  if (!e) return;
+  document.getElementById('qrModalCard').innerHTML = `
       <h2>${e.kind === 'U' ? 'User' : 'Item'}: ${escapeHtml(e.name)}</h2>
       ${renderQR(e.payload)}
       <div class="payload">${escapeHtml(e.payload)}</div>
-    </div>` : '';
+      <button class="action ghost" style="width:100%" onclick="closeQRModal()">Close</button>`;
+  document.getElementById('qrModal').hidden = false;
 };
+window.closeQRModal = () => { document.getElementById('qrModal').hidden = true; };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeQRModal(); closeScanModal(); } });
 window.delSaved = async (id) => {
   try { await mutate(s => { const i = s.registry.findIndex(x => x.id === id); if (i >= 0) s.registry.splice(i, 1); }); }
   catch (e) { alert('Could not delete (sync error): ' + e.message); }
@@ -329,7 +347,25 @@ const video = document.getElementById('video');
 const scanCanvas = document.createElement('canvas');
 const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
 
-document.getElementById('camBtn').onclick = () => (stream ? stopCamera() : startCamera());
+window.openScanModal = () => {
+  lastVal = '';                               // allow re-scanning the same code in a new session
+  document.getElementById('scanModal').hidden = false;
+  renderActiveUser();
+  startCamera();
+};
+window.closeScanModal = () => {
+  stopCamera();
+  document.getElementById('scanModal').hidden = true;
+};
+let toastTimer = null;
+function showToast(msg, cls) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast' + (cls ? ' ' + cls : '');
+  el.hidden = false;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 4000);
+}
 
 async function startCamera() {
   if (typeof jsQR !== 'function') {
@@ -340,7 +376,6 @@ async function startCamera() {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
     video.srcObject = stream;
     await video.play();
-    document.getElementById('camBtn').textContent = 'Stop camera';
     setStatus('', 'Point the camera at a QR code…');
     scanTimer = setInterval(() => {
       try {
@@ -361,7 +396,6 @@ function stopCamera() {
   if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   video.srcObject = null;
-  document.getElementById('camBtn').textContent = 'Start camera';
   setStatus('muted', 'Camera off.');
 }
 function handleScan(raw) {
@@ -375,8 +409,9 @@ function handleScan(raw) {
   if (data.kind === 'user') {
     activeUser = data;
     renderActiveUser();
-    setStatus('ok', '👤 User set: ' + data.name + '. Now scan an item.');
     beep();
+    closeScanModal();
+    showToast('👤 ' + data.name + ' was scanned — scan an item to check it out.', 'ok');
     return;
   }
   // item
@@ -385,14 +420,16 @@ function handleScan(raw) {
   scanBusy = true;
   setStatus('', 'Saving…');
   toggleItem(data, activeUser)
-    .then(msg => { setStatus('ok', msg); beep(); })
+    .then(msg => { beep(); closeScanModal(); showToast(msg, 'ok'); })
     .catch(e => setStatus('warn', 'Could not save: ' + e.message))
     .finally(() => { scanBusy = false; });
 }
 function renderActiveUser() {
-  document.getElementById('activeUser').innerHTML = activeUser
-    ? `Active user: <span class="active-user">${escapeHtml(activeUser.name)}</span> — scan items to check out / return.`
-    : 'No user scanned yet — scan a <span class="active-user">user QR</span> first.';
+  const el = document.getElementById('scanActiveUser');
+  if (!el) return;
+  el.innerHTML = activeUser
+    ? `Active user: <span class="active-user">${escapeHtml(activeUser.name)}</span> — scan an item to check out / return.`
+    : 'No active user — scan a <span class="active-user">user QR</span> first.';
 }
 function setStatus(cls, msg) {
   const el = document.getElementById('scanStatus');
@@ -505,6 +542,12 @@ document.getElementById('syncDisconnect').onclick = () => {
 };
 
 /* ---------------- startup ---------------- */
+// Once a bin is connected, hide the Sync tab to keep the UI clean —
+// unless ?sync=true is in the URL (so you can still get back to it).
+const forceSync = new URLSearchParams(location.search).get('sync') === 'true';
+if (isSynced() && !forceSync) {
+  document.querySelector('nav button[data-tab="sync"]').hidden = true;
+}
 if (sync) { syncKeyEl.value = sync.key; syncBinEl.value = sync.binId; }
 if (isSynced()) { setSyncStatus('ok', 'Connected ✓'); refresh(); }
 else { renderAll(); }
