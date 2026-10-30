@@ -31,10 +31,10 @@
   .status.ok { border-color:var(--ok); }
   .status.warn { border-color:var(--warn); }
   .active-user { font-weight:600; color:var(--accent); }
-  .row { display:flex; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .row { display:flex; justify-content:space-between; align-items: flex-start; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .row:last-child { border-bottom:0; }
   .row small { color:var(--muted); display:block; }
-  .pill { font-size:11px; padding:2px 8px; border-radius:999px; align-self:center; white-space:nowrap; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:999px; white-space:nowrap; }
   .pill.out { background:#3a2a12; color:var(--warn); }
   .pill.back { background:#12322a; color:var(--ok); }
   .muted { color:var(--muted); }
@@ -47,7 +47,10 @@
   .modal { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
   .modal[hidden] { display:none; }
   .modal-backdrop { position:absolute; inset:0; background:rgba(0,0,0,0.6); }
-  .modal-card { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; max-width:90vw; }
+  .modal-card { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; max-width:90vw; max-height:90vh; overflow-y:auto; }
+  .subtabs { display:flex; gap:6px; margin-top:10px; }
+  .subtab { flex:1; padding:8px; border:1px solid var(--line); background:transparent; color:var(--muted); border-radius:8px; cursor:pointer; font-size:13px; }
+  .subtab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
   .fab { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:40; padding:14px 28px; background:var(--accent); color:#fff; border:0; border-radius:999px; font-size:16px; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,0.4); }
   .toast { position:fixed; bottom:92px; left:50%; transform:translateX(-50%); z-index:70; max-width:90vw; padding:12px 20px; background:var(--panel); border:1px solid var(--line); border-radius:999px; text-align:center; font-size:14px; box-shadow:0 6px 20px rgba(0,0,0,0.4); }
   .toast[hidden] { display:none; }
@@ -65,7 +68,6 @@
   <div class="nav-wrapper">
     <button data-tab="codes" class="active">Codes</button>
     <button data-tab="setup">Add QR</button>
-    <button data-tab="ledger">Ledger</button>
     <button data-tab="sync">Sync</button>
   </div>
 </nav>
@@ -99,21 +101,13 @@
     </div>
     <div class="card">
       <h2>Items</h2>
+      <div class="subtabs">
+        <button id="itemsAvailBtn" class="subtab active" onclick="setItemView('avail')">Available</button>
+        <button id="itemsOutBtn" class="subtab" onclick="setItemView('out')">Checked out</button>
+      </div>
+      <input id="itemSearch" type="search" placeholder="Search items…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other" oninput="setItemSearch(this.value)" style="margin-top:10px">
       <div id="codesItems" class="code-grid"></div>
     </div>
-  </section>
-
-  <!-- ======================= LEDGER ======================= -->
-  <section id="ledger">
-    <div class="card">
-      <h2>Currently checked out</h2>
-      <div id="openList"></div>
-    </div>
-    <details class="card">
-      <summary>History</summary>
-      <div id="histList" style="margin-top:12px"></div>
-    </details>
-    <button id="clearBtn" class="action ghost" style="width:100%">Clear ledger</button>
   </section>
 
   <!-- ======================= SYNC ======================= -->
@@ -122,15 +116,17 @@
       <h2>Shared sync</h2>
       <p class="muted" style="font-size:13px; margin:6px 0 0">Connect every device to the same bin to share the catalog and ledger. Your key is stored only in this browser — never uploaded to the repo.</p>
       <div id="syncStatus" class="status muted" style="margin-top:12px">Not connected — data stays on this device.</div>
-      <label for="syncKey">jsonbin.io API key (X-Master-Key)</label>
-      <input id="syncKey" type="password" placeholder="$2a$10$…" autocomplete="off">
-      <label for="syncBin">Bin ID</label>
-      <input id="syncBin" placeholder="Leave blank, then press Create to make a new one" autocomplete="off">
-      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
-        <button id="syncConnect" class="action" style="flex:1">Connect</button>
-        <button id="syncCreate" class="action ghost" style="flex:1">Create new bin</button>
-      </div>
-      <button id="syncDisconnect" class="action ghost" style="width:100%">Disconnect</button>
+      <form autocomplete="off" onsubmit="return false">
+        <label for="syncKey">jsonbin.io API key (X-Master-Key)</label>
+        <input id="syncKey" type="password" placeholder="$2a$10$…" autocomplete="new-password" data-1p-ignore data-lpignore="true">
+        <label for="syncBin">Bin ID</label>
+        <input id="syncBin" placeholder="Leave blank, then press Create to make a new one" autocomplete="off" data-1p-ignore data-lpignore="true">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
+          <button id="syncConnect" type="button" class="action" style="flex:1">Connect</button>
+          <button id="syncCreate" type="button" class="action ghost" style="flex:1">Create new bin</button>
+        </div>
+        <button id="syncDisconnect" type="button" class="action ghost" style="width:100%">Disconnect</button>
+      </form>
     </div>
     <div class="card">
       <h2>Set it up (once)</h2>
@@ -242,7 +238,7 @@ async function mutate(fn) {
   renderAll();
 }
 
-function renderAll() { renderRegistry(); renderCatalog(); renderLedger(); }
+function renderAll() { renderRegistry(); renderCatalog(); }
 function startPolling() { if (isSynced() && !poller) poller = setInterval(refresh, 5000); }
 function stopPolling() { if (poller) { clearInterval(poller); poller = null; } }
 
@@ -263,9 +259,8 @@ document.querySelectorAll('nav button').forEach(btn => {
     document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b === btn));
     document.querySelectorAll('main section').forEach(s => s.classList.toggle('active', s.id === btn.dataset.tab));
     const tab = btn.dataset.tab;
-    if (tab === 'ledger') { refresh(); startPolling(); } else { stopPolling(); }
+    if (tab === 'codes') { refresh(); startPolling(); } else { stopPolling(); }
     if (tab === 'setup') refresh();
-    if (tab === 'codes') refresh();
   };
 });
 
@@ -309,22 +304,61 @@ function renderRegistry() {
       </div>
     </div>`).join('');
 }
-/* ---------------- codes: browse catalog, click a name to show its QR ---------------- */
+/* ---------------- codes: browse catalog + item status, click a name to show details ---------------- */
+let itemView = 'avail';   // 'avail' = checked in / available, 'out' = checked out
+let itemSearch = '';      // lowercased name filter for the items grid
+const openEntry = (id) => state.ledger.find(r => r.itemId === id && r.back === null);
+window.setItemView = (v) => {
+  itemView = v;
+  document.getElementById('itemsAvailBtn').classList.toggle('active', v === 'avail');
+  document.getElementById('itemsOutBtn').classList.toggle('active', v === 'out');
+  renderCatalog();
+};
+window.setItemSearch = (v) => { itemSearch = v.trim().toLowerCase(); renderCatalog(); };
 function renderCatalog() {
   const reg = state.registry;
-  const tiles = (arr) => arr.length
+  const tiles = (arr, empty) => arr.length
     ? arr.map(e => `<button class="code-tile" onclick="showCatalogQR('${escapeAttr(e.id)}')">${escapeHtml(e.name)}</button>`).join('')
-    : '<div class="list-empty">None yet.</div>';
-  document.getElementById('codesUsers').innerHTML = tiles(reg.filter(e => e.kind === 'U'));
-  document.getElementById('codesItems').innerHTML = tiles(reg.filter(e => e.kind === 'I'));
+    : `<div class="list-empty">${empty}</div>`;
+  document.getElementById('codesUsers').innerHTML = tiles(reg.filter(e => e.kind === 'U'), 'None yet.');
+  let shown = reg.filter(e => e.kind === 'I' && (itemView === 'out' ? openEntry(e.id) : !openEntry(e.id)));
+  if (itemSearch) shown = shown.filter(e => e.name.toLowerCase().includes(itemSearch));
+  const empty = itemSearch ? 'No matching items.' : (itemView === 'out' ? 'Nothing checked out.' : 'No available items.');
+  document.getElementById('codesItems').innerHTML = tiles(shown, empty);
 }
 window.showCatalogQR = (id) => {
   const e = state.registry.find(x => x.id === id);
   if (!e) return;
+  let extra = '';
+  if (e.kind === 'U') {
+    const out = state.ledger.filter(r => r.userId === id && r.back === null).slice().reverse();
+    extra += `<div style="margin-top:14px; text-align:left">
+      <strong style="font-size:13px">Checked out items</strong>
+      ${out.length ? out.map(r => `<div class="row">
+        <div><strong>${escapeHtml(r.itemName)}</strong><small>since ${fmt(r.out)}</small></div>
+        <span class="pill out">OUT</span>
+      </div>`).join('') : '<div class="list-empty">Nothing checked out.</div>'}
+    </div>`;
+  }
+  if (e.kind === 'I') {
+    const open = openEntry(id);
+    extra += open
+      ? `<div class="status warn">Checked out by <span class="active-user">${escapeHtml(open.userName)}</span><br><small class="muted">since ${fmt(open.out)}</small></div>`
+      : `<div class="status ok">Available</div>`;
+    const hist = state.ledger.filter(r => r.itemId === id).slice().reverse();
+    extra += `<div style="margin-top:14px; text-align:left">
+      <strong style="font-size:13px">History</strong>
+      ${hist.length ? hist.map(r => `<div class="row">
+        <div><strong>${escapeHtml(r.userName)}</strong><small>Out ${fmt(r.out)}</small>${r.back ? `<small>Back ${fmt(r.back)}</small>` : ''}</div>
+        ${r.back === null ? '<span class="pill out">OUT</span>' : '<span class="pill back">RETURNED</span>'}
+      </div>`).join('') : '<div class="list-empty">No history yet.</div>'}
+    </div>`;
+  }
   document.getElementById('qrModalCard').innerHTML = `
       <h2>${e.kind === 'U' ? 'User' : 'Item'}: ${escapeHtml(e.name)}</h2>
       ${renderQR(e.payload)}
       <div class="payload">${escapeHtml(e.payload)}</div>
+      ${extra}
       <button class="action ghost" style="width:100%" onclick="closeQRModal()">Close</button>`;
   document.getElementById('qrModal').hidden = false;
 };
@@ -452,32 +486,6 @@ async function toggleItem(item, user) {
   });
   return msg;
 }
-function renderLedger() {
-  const led = state.ledger;
-  const open = led.filter(r => r.back === null).reverse();
-  const hist = led.slice().reverse();
-  document.getElementById('openList').innerHTML = open.length
-    ? open.map(r => rowHtml(r)).join('')
-    : '<div class="list-empty">Nothing is checked out.</div>';
-  document.getElementById('histList').innerHTML = hist.length
-    ? hist.map(r => rowHtml(r)).join('')
-    : '<div class="list-empty">No activity yet.</div>';
-}
-function rowHtml(r) {
-  const status = r.back === null
-    ? '<span class="pill out">OUT</span>'
-    : '<span class="pill back">RETURNED</span>';
-  return `<div class="row">
-    <div><strong>${escapeHtml(r.itemName)}</strong>
-      <small>${escapeHtml(r.userName)} · out ${fmt(r.out)}${r.back ? ' · back ' + fmt(r.back) : ''}</small></div>
-    ${status}</div>`;
-}
-document.getElementById('clearBtn').onclick = async () => {
-  if (!confirm('Delete the entire ledger?')) return;
-  try { await mutate(s => { s.ledger = []; }); }
-  catch (e) { alert('Could not clear (sync error): ' + e.message); }
-};
-
 /* ---------------- utils ---------------- */
 function fmt(ts) { const d = new Date(ts); return d.toLocaleString(); }
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
@@ -551,6 +559,7 @@ if (isSynced() && !forceSync) {
 if (sync) { syncKeyEl.value = sync.key; syncBinEl.value = sync.binId; }
 if (isSynced()) { setSyncStatus('ok', 'Connected ✓'); refresh(); }
 else { renderAll(); }
+startPolling();   // Codes is the default tab; keep item status fresh when synced
 renderActiveUser();
 </script>
 </body>
